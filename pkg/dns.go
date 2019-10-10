@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Server string
 }
+
 type DnsSoa struct {
 	Name    string
 	Mname   string
@@ -22,6 +23,19 @@ type DnsSoa struct {
 	Retry   uint32
 	Expire  uint32
 	Minimum uint32
+}
+
+type DnsRequstedInAnswer struct {
+	Name    string
+	Type   uint16
+	Class  uint16
+}
+
+type DnsAnswerHeader struct {
+	Name    string
+	Type   dns_type
+	Class  uint16
+	Ttl  uint32
 }
 
 type DnsMx struct {
@@ -264,16 +278,25 @@ func Resolve(rrtype dns_type, qname string, config Config) ([]interface{}, error
 	}
 	var namesCache = map[int]string{}
 	var position int = 12 // header
-	// передаем весь пакет, так доменные имена могут ссылаться на другое положение в пакете
+	if ans.QDCount != 1 {
+		// кажется нигде не описано а никто не поодерживает больше одного запроса
+		return nil, fmt.Errorf("unsupported question number %v", ans.QDCount)
+	}
 	for i := 0; i < int(ans.QDCount); i++ {
 		// парсим запрос так как на него могут ссылаться в ответе
-		ans2, err := parseDnsQuestionSection(buffer, &position, namesCache)
-		fmt.Println("ans:", ans2, err)
+		answerQuestion, err := parseDnsQuestionSection(buffer, &position, namesCache)
+		log.Println("answer question:", answerQuestion)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for i := 0; i < int(ans.ANCount); i++ {
-		answer, err := parseDnsAnswerSection(buffer, &position, namesCache)
+		answer, header, err := parseDnsAnswerSection(buffer, &position, namesCache)
+		if err != nil {
+			return nil, err
+		}
 		ret = append(ret, answer)
-		fmt.Println("ans:", answer, err)
+		fmt.Println("answer section:", header, answer)
 	}
 	return ret, nil
 }
@@ -412,9 +435,10 @@ func encodeName(s string) ([]byte, error) {
 	return res[0:pos], nil
 }
 
-func parseDnsQuestionSection(data []byte, position *int, nameCache map[int]string) ([]string, error) {
+func parseDnsQuestionSection(data []byte, position *int, nameCache map[int]string) (DnsRequstedInAnswer, error) {
 	var pos = *position
-	names, read, _ := readName(data[pos:], nameCache, pos)
+	var res DnsRequstedInAnswer
+	name, read, _ := readName(data[pos:], nameCache, pos)
 	pos += read
 
 	typ := binary.BigEndian.Uint16(data[pos : pos+2])
@@ -422,10 +446,11 @@ func parseDnsQuestionSection(data []byte, position *int, nameCache map[int]strin
 
 	class := binary.BigEndian.Uint16(data[pos : pos+2])
 	pos += 2
-	log.Printf("names %v type %v class %v", names, typ, class)
-
+	res.Class = class
+	res.Type = typ
+	res.Name = name
 	*position = pos
-	return []string{""}, nil
+	return res, nil
 }
 
 func buildDnsQuestionSection(rrtype dns_type, data []byte, qname string) (int, error) {
@@ -443,16 +468,17 @@ func buildDnsQuestionSection(rrtype dns_type, data []byte, qname string) (int, e
 	return pos, nil
 }
 
-func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string) (interface{}, error) {
+func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string) (interface{}, DnsAnswerHeader, error) {
 	var pos = *position
 	var ret interface{}
-	names, read, err := readName(data[pos:], nameCache, pos)
+	var header DnsAnswerHeader
+	name, read, err := readName(data[pos:], nameCache, pos)
 	if err != nil {
-		return nil, err
+		return nil,header, err
 	}
 	pos += read
 
-	dataType := binary.BigEndian.Uint16(data[pos : pos+2])
+	typ := binary.BigEndian.Uint16(data[pos : pos+2])
 	pos += 2
 
 	class := binary.BigEndian.Uint16(data[pos : pos+2])
@@ -465,30 +491,30 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 	pos += 2
 
 	rdata := data[pos : pos+int(dataLen)]
-	switch dataType {
-	case uint16(RR_A):
+	switch dns_type(typ) {
+	case RR_A:
 		if dataLen != 4 {
-			return nil, fmt.Errorf("wrong data size for A type - %v", dataLen)
+			return nil, header, fmt.Errorf("wrong data size for A type - %v", dataLen)
 		}
 		ret = net.IP(rdata)
-	case uint16(RR_AAAA):
+	case RR_AAAA:
 		if dataLen != 16 {
-			return nil, fmt.Errorf("wrong data size for AAAA type - %v", dataLen)
+			return nil, header, fmt.Errorf("wrong data size for AAAA type - %v", dataLen)
 		}
 		ret = net.IP(rdata)
-	case uint16(RR_CNAME), uint16(RR_NS), uint16(RR_PTR):
+	case RR_CNAME, RR_NS, RR_PTR:
 		ret, _, err = readName(rdata, nameCache, pos)
 		if err != nil {
-			return nil, err
+			return nil, header, err
 		}
-	case uint16(RR_SOA):
+	case RR_SOA:
 		soa_name, read, err := readName(rdata, nameCache, pos)
 		if err != nil {
-			return nil, err
+			return nil, header, err
 		}
 		soa_rname, _, err := readName(rdata[read:], nameCache, pos)
 		if err != nil {
-			return nil, err
+			return nil, header, err
 		}
 		serial := binary.BigEndian.Uint32(rdata)
 		refresh := binary.BigEndian.Uint32(rdata[4:])
@@ -496,30 +522,29 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 		expire := binary.BigEndian.Uint32(rdata[12:])
 		minimum := binary.BigEndian.Uint32(rdata[16:])
 		ret = DnsSoa{soa_name, soa_rname, serial, refresh, retry, expire, minimum}
-	case uint16(RR_MX):
+	case RR_MX:
 		preference := binary.BigEndian.Uint16(rdata)
 		exchange, _, err := readName(rdata[2:], nameCache, pos)
 		if err != nil {
-			return nil, err
+			return nil, header,err
 		}
 		ret = DnsMx{preference, exchange}
-	case uint16(RR_SRV):
+	case RR_SRV:
 		priority := binary.BigEndian.Uint16(rdata)
 		weight := binary.BigEndian.Uint16(rdata[2:])
 		port := binary.BigEndian.Uint16(rdata[4:])
 		target, _, err := readName(rdata[6:], nameCache, pos)
 		if err != nil {
-			return nil, err
+			return nil,header, err
 		}
 		ret = DnsSRV{priority, weight, port, target}
 	default:
-		return nil, fmt.Errorf("unsupported data type %v", dataType)
+		return nil, header,fmt.Errorf("unsupported data type %v", typ)
 	}
-
-	log.Printf("names %v data type %v class %v ttl %v", names, dataType, class, ttl)
+	header = DnsAnswerHeader{name, dns_type(typ),class, ttl}
 	pos += int(dataLen)
 	*position = pos
-	return ret, nil
+	return ret, header, nil
 }
 
 func parseDnsHeader(data []byte) (DnsMessageHeader, error) {
