@@ -25,29 +25,31 @@ type DnsSoa struct {
 	Minimum uint32
 }
 
-type DnsRequstedInAnswer struct {
-	Name    string
-	Type   uint16
-	Class  uint16
+type DnsRequestedInAnswer struct {
+	Name  string
+	Type  DnsType
+	Class class
 }
 
 type DnsAnswerHeader struct {
-	Name    string
-	Type   dns_type
-	Class  uint16
-	Ttl  uint32
+	Name  string
+	Type  DnsType
+	Class class
+	Ttl   uint32
 }
 
 type DnsMx struct {
 	Preference uint16
 	Exchange   string
 }
+
 type DnsSRV struct {
 	Priority uint16
 	Weight   uint16
 	Port     uint16
 	Target   string
 }
+
 type DnsMessageHeader struct {
 	ID      uint16
 	Query   bool
@@ -68,26 +70,48 @@ type DnsMessageHeader struct {
 
 const headerLen = 12
 
-type dns_type = int
+type DnsType = int
 
 const (
-	RR_A     dns_type = 1
-	RR_NS    dns_type = 2
-	RR_AAAA  dns_type = 28
-	RR_CNAME dns_type = 5
-	RR_SOA   dns_type = 6
-	RR_PTR   dns_type = 12
-	RR_MX    dns_type = 15
-	RR_SRV   dns_type = 33
-	RR_ANY   dns_type = 255
+	RR_A     DnsType = 1
+	RR_NS    DnsType = 2
+	RR_AAAA  DnsType = 28
+	RR_CNAME DnsType = 5
+	RR_SOA   DnsType = 6
+	RR_PTR   DnsType = 12
+	RR_MX    DnsType = 15
+	RR_SRV   DnsType = 33
+	RR_ANY   DnsType = 255
 )
+
+var RRnames = map[DnsType]string{
+	RR_A:     "A",
+	RR_NS:    "NS",
+	RR_AAAA:  "AAAA",
+	RR_CNAME: "CNAME",
+	RR_SOA:   "SOA",
+	RR_PTR:   "PTR",
+	RR_MX:    "MX",
+	RR_SRV:   "SRV",
+	RR_ANY:   "ANY",
+}
+
+type class = int
+
+const (
+	ClassIN class = 1
+)
+
+var ClassNames = map[DnsType]string{
+	ClassIN: "IN",
+}
 
 const MaxLabelLen = 163
 const MaxNameLen = 255
 
 func ResolveA(qname string, config Config) ([]net.IP, error) {
 	var ret []net.IP
-	res, err := Resolve(RR_A, qname, config)
+	res, _, err := Resolve(RR_A, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +119,8 @@ func ResolveA(qname string, config Config) ([]net.IP, error) {
 		switch v.(type) {
 		case net.IP:
 			ret = append(ret, v.(net.IP))
+		case string:
+			//log.Printf("cname received %v", v)
 		default:
 			return nil, errors.New("unknown")
 		}
@@ -104,7 +130,7 @@ func ResolveA(qname string, config Config) ([]net.IP, error) {
 
 func ResolveAaaa(qname string, config Config) ([]net.IP, error) {
 	var ret []net.IP
-	res, err := Resolve(RR_AAAA, qname, config)
+	res, _, err  := Resolve(RR_AAAA, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +147,7 @@ func ResolveAaaa(qname string, config Config) ([]net.IP, error) {
 
 func ResolveCname(qname string, config Config) ([]string, error) {
 	var ret []string
-	res, err := Resolve(RR_CNAME, qname, config)
+	res, _, err := Resolve(RR_CNAME, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +164,7 @@ func ResolveCname(qname string, config Config) ([]string, error) {
 
 func Resolve_NS(qname string, config Config) ([]string, error) {
 	var ret []string
-	res, err := Resolve(RR_NS, qname, config)
+	res, _, err := Resolve(RR_NS, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +181,7 @@ func Resolve_NS(qname string, config Config) ([]string, error) {
 
 func ResolveSoa(qname string, config Config) ([]DnsSoa, error) {
 	var ret []DnsSoa
-	res, err := Resolve(RR_SOA, qname, config)
+	res, _, err := Resolve(RR_SOA, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +199,7 @@ func ResolveSoa(qname string, config Config) ([]DnsSoa, error) {
 func ResolvePtr(qname string, config Config) ([]string, error) {
 	var ret []string
 	qname += ".in-addr.arpa"
-	res, err := Resolve(RR_PTR, qname, config)
+	res, _, err := Resolve(RR_PTR, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +216,7 @@ func ResolvePtr(qname string, config Config) ([]string, error) {
 
 func ResolveMx(qname string, config Config) ([]DnsMx, error) {
 	var ret []DnsMx
-	res, err := Resolve(RR_MX, qname, config)
+	res, _, err := Resolve(RR_MX, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +233,7 @@ func ResolveMx(qname string, config Config) ([]DnsMx, error) {
 
 func ResolveSrv(qname string, config Config) ([]DnsSRV, error) {
 	var ret []DnsSRV
-	res, err := Resolve(RR_SRV, qname, config)
+	res, _, err := Resolve(RR_SRV, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -223,29 +249,30 @@ func ResolveSrv(qname string, config Config) ([]DnsSRV, error) {
 }
 
 func ResolveAny(qname string, config Config) ([]interface{}, error) {
-	res, err := Resolve(RR_ANY, qname, config)
+	res, _, err := Resolve(RR_ANY, qname, config)
 	if err != nil {
 		return nil, err
 	}
 	return res, nil
 }
 
-func Resolve(rrtype dns_type, qname string, config Config) ([]interface{}, error) {
+func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, error) {
 	var ret []interface{}
 	var n int
+	var transactionId int
 	conn, err := net.Dial("udp", config.Server)
 
 	if err != nil {
-		return nil, err
+		return nil, transactionId, err
 	}
 	defer conn.Close()
 	q, err := makeQuery(rrtype, qname)
 	if err != nil {
-		return nil, err
+		return nil, transactionId, err
 	}
 	log.Printf("%v makeQuery", q)
 	if n, err = conn.Write(q); err != nil {
-		return nil, err
+		return nil, transactionId, err
 	}
 	log.Printf("%v bytes written", n)
 
@@ -253,67 +280,56 @@ func Resolve(rrtype dns_type, qname string, config Config) ([]interface{}, error
 	buffer := make([]byte, 1024)
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if n, err = conn.Read(buffer); err != nil {
-		return nil, err
+		return nil, transactionId, err
 	}
 	log.Printf("%v bytes read", n)
 	ans, err := parseDnsHeader(buffer)
 	if err != nil {
-		return nil, err
+		return nil, transactionId, err
 	}
 	if ans.RCode > 0 {
 		switch ans.RCode {
 		case 1:
-			return nil, errors.New("Format error")
+			err = errors.New("Format error")
 		case 2:
-			return nil, errors.New("Server failure")
+			err = errors.New("server failure")
 		case 3:
-			return nil, errors.New("Name Error")
+			err = errors.New("name Error")
 		case 4:
-			return nil, errors.New("Not Implemented")
+			err = errors.New("not Implemented")
 		case 5:
-			return nil, errors.New("Refused")
+			err = errors.New("refused")
 		default:
-			return nil, errors.New("wrong code")
+			err = fmt.Errorf("unknown answer error %v", ans.RCode)
 		}
+		return nil, transactionId, err
 	}
 	var namesCache = map[int]string{}
-	var position int = 12 // header
+	var position int = 12 // длина заголовка
 	if ans.QDCount != 1 {
-		// кажется нигде не описано а никто не поодерживает больше одного запроса
-		return nil, fmt.Errorf("unsupported question number %v", ans.QDCount)
+		// кажется нигде не описано и никто не поддерживает больше одного запроса
+		return nil, transactionId, fmt.Errorf("unsupported question number %v", ans.QDCount)
 	}
 	for i := 0; i < int(ans.QDCount); i++ {
 		// парсим запрос так как на него могут ссылаться в ответе
 		answerQuestion, err := parseDnsQuestionSection(buffer, &position, namesCache)
 		log.Println("answer question:", answerQuestion)
 		if err != nil {
-			return nil, err
+			return nil, transactionId, err
 		}
 	}
 	for i := 0; i < int(ans.ANCount); i++ {
 		answer, header, err := parseDnsAnswerSection(buffer, &position, namesCache)
 		if err != nil {
-			return nil, err
+			return nil, transactionId, err
 		}
 		ret = append(ret, answer)
-		fmt.Println("answer section:", header, answer)
+		log.Println("answer section:", header, answer)
 	}
-	return ret, nil
+	return ret, int(ans.ID), nil
 }
 
-// subset has to go from lowest to highest
-func bits(b uint, subset ...uint) (r uint) {
-	i := uint(0)
-	for _, v := range subset {
-		if b&(1<<v) > 0 {
-			r = r | 1<<uint(i)
-		}
-		i++
-	}
-	return
-}
-
-func makeQuery(rrtype dns_type, qname string) ([]byte, error) {
+func makeQuery(rrtype DnsType, qname string) ([]byte, error) {
 	res := make([]byte, 400)
 	var header = DnsMessageHeader{}
 
@@ -377,6 +393,7 @@ func readName(data []byte, nameCache map[int]string, packetPos int) (string, int
 	// кодируется как байт с длинной n и последующие n байт имени
 	var labels []string
 	var label string
+	var name string
 	current_offset := 0
 	for {
 		namePartLen := int(data[current_offset])
@@ -388,11 +405,11 @@ func readName(data []byte, nameCache map[int]string, packetPos int) (string, int
 			// cтаршие 2 бита это флаг компрессии, а оставшиеся - смещение от начала пакета
 			offset := binary.BigEndian.Uint16(data[current_offset:current_offset+2]) << 2 >> 2
 			if offset < headerLen {
-				return "", current_offset, fmt.Errorf("offset is too small %v", offset)
+				return name, current_offset, fmt.Errorf("offset is too small %v", offset)
 			}
 			nameFromCache, ok := nameCache[int(offset)]
 			if ! ok {
-				return "", current_offset, fmt.Errorf("unable to find name with offset %v", int(offset))
+				return name, current_offset, fmt.Errorf("unable to find name with offset %v", int(offset))
 			}
 			labels = append(labels, nameFromCache)
 			current_offset += 2
@@ -415,6 +432,7 @@ func readName(data []byte, nameCache map[int]string, packetPos int) (string, int
 	}
 	return strings.Join(labels, "."), current_offset, nil
 }
+
 func encodeName(s string) ([]byte, error) {
 	res := make([]byte, MaxNameLen)
 	var pos int = 0
@@ -435,25 +453,28 @@ func encodeName(s string) ([]byte, error) {
 	return res[0:pos], nil
 }
 
-func parseDnsQuestionSection(data []byte, position *int, nameCache map[int]string) (DnsRequstedInAnswer, error) {
+func parseDnsQuestionSection(data []byte, position *int, nameCache map[int]string) (DnsRequestedInAnswer, error) {
 	var pos = *position
-	var res DnsRequstedInAnswer
+	var res DnsRequestedInAnswer
 	name, read, _ := readName(data[pos:], nameCache, pos)
 	pos += read
 
 	typ := binary.BigEndian.Uint16(data[pos : pos+2])
 	pos += 2
 
-	class := binary.BigEndian.Uint16(data[pos : pos+2])
+	klass := binary.BigEndian.Uint16(data[pos : pos+2])
+	if class(klass) != ClassIN {
+		return res, fmt.Errorf("unsupported class %v", klass)
+	}
 	pos += 2
-	res.Class = class
-	res.Type = typ
+	res.Class = class(klass)
+	res.Type = DnsType(typ)
 	res.Name = name
 	*position = pos
 	return res, nil
 }
 
-func buildDnsQuestionSection(rrtype dns_type, data []byte, qname string) (int, error) {
+func buildDnsQuestionSection(rrtype DnsType, data []byte, qname string) (int, error) {
 	var err error
 	name, err := encodeName(qname)
 	if err != nil {
@@ -474,14 +495,14 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 	var header DnsAnswerHeader
 	name, read, err := readName(data[pos:], nameCache, pos)
 	if err != nil {
-		return nil,header, err
+		return nil, header, err
 	}
 	pos += read
 
 	typ := binary.BigEndian.Uint16(data[pos : pos+2])
 	pos += 2
 
-	class := binary.BigEndian.Uint16(data[pos : pos+2])
+	klass := binary.BigEndian.Uint16(data[pos : pos+2])
 	pos += 2
 
 	ttl := binary.BigEndian.Uint32(data[pos : pos+4])
@@ -491,7 +512,7 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 	pos += 2
 
 	rdata := data[pos : pos+int(dataLen)]
-	switch dns_type(typ) {
+	switch DnsType(typ) {
 	case RR_A:
 		if dataLen != 4 {
 			return nil, header, fmt.Errorf("wrong data size for A type - %v", dataLen)
@@ -526,7 +547,7 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 		preference := binary.BigEndian.Uint16(rdata)
 		exchange, _, err := readName(rdata[2:], nameCache, pos)
 		if err != nil {
-			return nil, header,err
+			return nil, header, err
 		}
 		ret = DnsMx{preference, exchange}
 	case RR_SRV:
@@ -535,13 +556,13 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 		port := binary.BigEndian.Uint16(rdata[4:])
 		target, _, err := readName(rdata[6:], nameCache, pos)
 		if err != nil {
-			return nil,header, err
+			return nil, header, err
 		}
 		ret = DnsSRV{priority, weight, port, target}
 	default:
-		return nil, header,fmt.Errorf("unsupported data type %v", typ)
+		return nil, header, fmt.Errorf("unsupported data type %v", typ)
 	}
-	header = DnsAnswerHeader{name, dns_type(typ),class, ttl}
+	header = DnsAnswerHeader{name, DnsType(typ), class(klass), ttl}
 	pos += int(dataLen)
 	*position = pos
 	return ret, header, nil
@@ -578,4 +599,12 @@ func (msg DnsMessageHeader) String() string {
 	} else {
 		return fmt.Sprintf("Answer ID=%v QDCount=%v ANCount=%v", msg.ID, msg.QDCount, msg.ANCount)
 	}
+}
+
+func (msg DnsRequestedInAnswer) String() string {
+	return fmt.Sprintf("requested{name:%v, class:%v, type:%v}", msg.Name, ClassNames[msg.Class], RRnames[msg.Type])
+}
+
+func (msg DnsAnswerHeader) String() string {
+	return fmt.Sprintf("answer header{name:%v, class:%v, type:%v, ttl:%v}", msg.Name, ClassNames[msg.Class], RRnames[msg.Type], msg.Ttl)
 }
