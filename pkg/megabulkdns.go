@@ -1,20 +1,11 @@
 package awesomedns
 
 import (
+	"context"
 	"log"
 	"net"
 	"time"
 )
-
-type writerTask struct {
-	transactionId int
-	fqdn          string
-}
-
-type readerTask struct {
-	transactionId int
-	answer        Answer
-}
 
 type waitStatus struct {
 	fqdn string
@@ -23,7 +14,7 @@ type waitStatus struct {
 }
 
 func extractIp(items []interface{}) []net.IP {
-	var res = []net.IP{}
+	var res []net.IP
 	for _, item := range items {
 		switch item.(type) {
 		case net.IP:
@@ -33,7 +24,7 @@ func extractIp(items []interface{}) []net.IP {
 	return res
 }
 
-func connWriter(req chan writerTask, conn net.Conn, rate int) {
+func connWriter(req chan []byte, conn net.Conn, rate int, ctx context.Context) {
 	if rate > 1_000_000 {
 		rate = 1_000_000
 	}
@@ -41,60 +32,63 @@ func connWriter(req chan writerTask, conn net.Conn, rate int) {
 	period := time.Duration(1_000_000_000 / rate) // nano
 
 	for {
-		task, ok := <-req
+		select {
+		case <-ctx.Done():  // if cancel() execute
+			return
+		default:
+		}
+		msg, ok := <-req
 		if ! ok {
 			return
 		}
-		log.Println("send", task)
-		q, err := makeQuery(RR_A, task.fqdn, task.transactionId)
-		if err != nil {
-			log.Printf("makeQuery to %v", task.fqdn)
+		writen, err := conn.Write(msg)
+		if writen != len(msg) || err != nil {
+			log.Printf("unable to send %v err=%v", msg, err)
 		}
 		// простая реализация выдерживание периода
 		time.Sleep(period)
-		_, err = conn.Write(q)
-		if err != nil {
-			log.Printf("unable to send %v %v", err)
-		}
 	}
 }
 
-func connReader(answers chan readerTask, conn net.Conn) {
+func connReader(answers chan []byte, conn net.Conn, ctx context.Context) {
 	buffer := make([]byte, 1024)
 	for {
-		_, err := conn.Read(buffer)
+		select {
+		case <-ctx.Done():  // if cancel() execute
+			return
+		default:
+		}
+		read, err := conn.Read(buffer)
 		if err != nil {
 			log.Printf("unable to read %v", err)
 		} else {
-			ret, transactionId, err := parseDnsAnswer(buffer)
-			if err != nil {
-				log.Printf("unable to parse %v %v", buffer, err)
-			} else {
-				log.Printf("recv %v %v %v", ret, transactionId, err)
-			}
-			answers <- readerTask{transactionId, Answer{extractIp(ret), err}}
+			tmp := make([]byte, read)
+			copy(tmp, buffer)
+			answers <- tmp
 		}
 	}
 }
 
 func MegaBulkResolveA(req []string, config Config) (map[string]Answer, error) {
-	rate := 2    //pps
+	rate := 15     // pps
 	timeout := 10 // s
 	var res = map[string]Answer{}
 	var inwait = map[int]*waitStatus{} // отслеживание статуса запроса. нужно для перепосылки
+	ctx, cancel := context.WithCancel(context.Background())
 
 	conn, err := net.Dial("udp", config.Server)
 	if err != nil {
 		return res, err
 	}
+	//conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 
-	writerCh := make(chan writerTask, 10)
+	writerCh := make(chan []byte, 10)
 	defer close(writerCh)
-	readerCh := make(chan readerTask, 10)
+	readerCh := make(chan []byte, 10)
 	defer close(readerCh)
 
-	go connWriter(writerCh, conn, rate)
-	go connReader(readerCh, conn)
+	go connWriter(writerCh, conn, rate, ctx)
+	go connReader(readerCh, conn, ctx)
 
 	for i, fqdn := range req {
 		inwait[i] = &waitStatus{fqdn, time.Time{}, false}
@@ -105,22 +99,37 @@ func MegaBulkResolveA(req []string, config Config) (map[string]Answer, error) {
 		}
 		for k, v := range inwait {
 			if time.Now().Sub(v.sent) > time.Duration(timeout)*time.Second {
-				writerCh <- writerTask{k, v.fqdn}
+				qmsg, err := makeQuery(RR_A, v.fqdn, k)
+				if err != nil {
+					log.Printf("makeQuery error %v for %v", err, v)
+					continue
+				}
+				writerCh <- qmsg
 				v.sent = time.Now()
 			}
 		}
 		select {
 		case msg := <-readerCh:
-			q, ok := inwait[msg.transactionId]
-			if ! ok {
-				log.Printf("received unknown msg %v", msg.transactionId)
+			ret, transactionId, err := parseDnsAnswer(msg)
+			if err != nil {
+				if err == errNameError{
+				} else {
+					log.Printf("unable to parse %v %v", msg, err)
+				}
 			} else {
-				delete(inwait, msg.transactionId)
-				res[q.fqdn] = msg.answer
+				log.Printf("recv %v %v %v", ret, transactionId, err)
+			}
+			q, ok := inwait[transactionId]
+			if ! ok {
+				log.Printf("received unknown msg with transactionId=%v", transactionId)
+			} else {
+				delete(inwait, transactionId)
+				res[q.fqdn] = Answer{extractIp(ret), err}
 			}
 		case <-time.After(1 * time.Second):
 		}
 
 	}
+	cancel()
 	return res, nil
 }

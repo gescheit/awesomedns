@@ -13,7 +13,7 @@ type workerAnswer struct {
 }
 
 type Answer struct {
-	Answer []net.IP
+	Ips []net.IP
 	Err error
 }
 
