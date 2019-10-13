@@ -130,7 +130,7 @@ func ResolveA(qname string, config Config) ([]net.IP, error) {
 
 func ResolveAaaa(qname string, config Config) ([]net.IP, error) {
 	var ret []net.IP
-	res, _, err  := Resolve(RR_AAAA, qname, config)
+	res, _, err := Resolve(RR_AAAA, qname, config)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,12 @@ func ResolveAny(qname string, config Config) ([]interface{}, error) {
 }
 
 func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, error) {
-	var ret []interface{}
+	return resolve(rrtype, qname, config)
+}
+
+
+
+func resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, error) {
 	var n int
 	var transactionId int
 	conn, err := net.Dial("udp", config.Server)
@@ -265,12 +270,11 @@ func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, e
 	if err != nil {
 		return nil, transactionId, err
 	}
-	defer conn.Close()
-	q, err := makeQuery(rrtype, qname)
+
+	q, err := makeQuery(rrtype, qname, 234)
 	if err != nil {
 		return nil, transactionId, err
 	}
-	log.Printf("%v makeQuery", q)
 	if n, err = conn.Write(q); err != nil {
 		return nil, transactionId, err
 	}
@@ -283,7 +287,13 @@ func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, e
 		return nil, transactionId, err
 	}
 	log.Printf("%v bytes read", n)
-	ans, err := parseDnsHeader(buffer)
+	return parseDnsAnswer(buffer)
+}
+
+func parseDnsAnswer(data []byte) ([]interface{}, int, error) {
+	var transactionId int
+	var ret []interface{}
+	ans, err := parseDnsHeader(data)
 	if err != nil {
 		return nil, transactionId, err
 	}
@@ -312,14 +322,14 @@ func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, e
 	}
 	for i := 0; i < int(ans.QDCount); i++ {
 		// парсим запрос так как на него могут ссылаться в ответе
-		answerQuestion, err := parseDnsQuestionSection(buffer, &position, namesCache)
+		answerQuestion, err := parseDnsQuestionSection(data, &position, namesCache)
 		log.Println("answer question:", answerQuestion)
 		if err != nil {
 			return nil, transactionId, err
 		}
 	}
 	for i := 0; i < int(ans.ANCount); i++ {
-		answer, header, err := parseDnsAnswerSection(buffer, &position, namesCache)
+		answer, header, err := parseDnsAnswerSection(data, &position, namesCache)
 		if err != nil {
 			return nil, transactionId, err
 		}
@@ -329,11 +339,11 @@ func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, e
 	return ret, int(ans.ID), nil
 }
 
-func makeQuery(rrtype DnsType, qname string) ([]byte, error) {
+func makeQuery(rrtype DnsType, qname string, requestId int) ([]byte, error) {
 	res := make([]byte, 400)
 	var header = DnsMessageHeader{}
 
-	header.ID = 123
+	header.ID = uint16(requestId)
 	header.RD = true
 	header.QDCount = 1
 

@@ -13,8 +13,8 @@ type workerAnswer struct {
 }
 
 type Answer struct {
-	answer []net.IP
-	err error
+	Answer []net.IP
+	Err error
 }
 
 func worker(config Config,q chan string, res chan workerAnswer)  {
