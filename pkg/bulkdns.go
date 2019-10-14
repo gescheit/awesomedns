@@ -1,4 +1,5 @@
 package awesomedns
+
 // наивная реализация массового режима
 // вывываем Resolve на каждый запрос
 import (
@@ -7,9 +8,9 @@ import (
 )
 
 type workerAnswer struct {
-	query string
+	query  string
 	answer []net.IP
-	err error
+	err    error
 }
 
 type Answer struct {
@@ -17,7 +18,7 @@ type Answer struct {
 	Err error
 }
 
-func worker(config Config,q chan string, res chan workerAnswer)  {
+func worker(config Config, q chan string, res chan workerAnswer) {
 	for {
 		fqdn, ok := <-q
 		if ok == false {
@@ -36,17 +37,17 @@ func BulkResolveA(req []string, config Config) (map[string]Answer, error) {
 	ans := make(chan workerAnswer, 10)
 	defer close(ans)
 	// запуск n-воркеров
-	for w:=0; w<workers; w++ {
+	for w := 0; w < workers; w++ {
 		go worker(config, reqs, ans)
 	}
 
-	for _, fqdn := range req{
+	for _, fqdn := range req {
 		log.Println("send", fqdn)
-		reqs<-fqdn
+		reqs <- fqdn
 	}
 
-	for i:=0; i<len(req); i++ {
-		a := <- ans
+	for i := 0; i < len(req); i++ {
+		a := <-ans
 		res[a.query] = Answer{a.answer, a.err}
 		log.Printf("recv %v", a)
 	}

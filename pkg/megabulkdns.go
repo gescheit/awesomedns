@@ -33,12 +33,12 @@ func connWriter(req chan []byte, conn net.Conn, rate int, ctx context.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():  // if cancel() execute
+		case <-ctx.Done(): // if cancel() execute
 			return
 		default:
 		}
 		msg, ok := <-req
-		if ! ok {
+		if !ok {
 			return
 		}
 		writen, err := conn.Write(msg)
@@ -54,7 +54,7 @@ func connReader(answers chan []byte, conn net.Conn, ctx context.Context) {
 	buffer := make([]byte, 1024)
 	for {
 		select {
-		case <-ctx.Done():  // if cancel() execute
+		case <-ctx.Done(): // if cancel() execute
 			return
 		default:
 		}
@@ -70,7 +70,7 @@ func connReader(answers chan []byte, conn net.Conn, ctx context.Context) {
 }
 
 func MegaBulkResolveA(req []string, config Config) (map[string]Answer, error) {
-	rate := 15     // pps
+	rate := 15    // pps
 	timeout := 10 // s
 	var res = map[string]Answer{}
 	var inwait = map[int]*waitStatus{} // отслеживание статуса запроса. нужно для перепосылки
@@ -112,7 +112,7 @@ func MegaBulkResolveA(req []string, config Config) (map[string]Answer, error) {
 		case msg := <-readerCh:
 			ret, transactionId, err := parseDnsAnswer(msg)
 			if err != nil {
-				if err == errNameError{
+				if err == errNameError {
 				} else {
 					log.Printf("unable to parse %v %v", msg, err)
 				}
@@ -120,7 +120,7 @@ func MegaBulkResolveA(req []string, config Config) (map[string]Answer, error) {
 				log.Printf("recv %v %v %v", ret, transactionId, err)
 			}
 			q, ok := inwait[transactionId]
-			if ! ok {
+			if !ok {
 				log.Printf("received unknown msg with transactionId=%v", transactionId)
 			} else {
 				delete(inwait, transactionId)

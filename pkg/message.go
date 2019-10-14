@@ -260,7 +260,7 @@ func readName(data []byte, nameCache map[int]string, packetPos int) (string, int
 				return name, currentOffset, fmt.Errorf("offset is too small %v", offset)
 			}
 			nameFromCache, ok := nameCache[int(offset)]
-			if ! ok {
+			if !ok {
 				return name, currentOffset, fmt.Errorf("unable to find name with offset %v", int(offset))
 			}
 			labels = append(labels, nameFromCache)
