@@ -127,6 +127,8 @@ var (
 	errNameError      = errors.New("name Error")
 	errNotImplemented = errors.New("not Implemented")
 	errRefused        = errors.New("refused")
+
+	errCompressionMask = errors.New("wrong compression mask")
 )
 
 func parseDnsAnswer(data []byte) ([]interface{}, int, error) {
@@ -250,7 +252,7 @@ func readName(data []byte, nameCache map[int]string, packetPos int) (string, int
 		if namePartLen > MaxLabelLen {
 			// rfc1035 4.1.4 компрессия
 			if namePartLen&0b1100_0000 != 0b1100_0000 {
-				panic("wrong compression mask")
+				return name, currentOffset, errCompressionMask
 			}
 			// cтаршие 2 бита это флаг компрессии, а оставшиеся - смещение от начала пакета
 			offset := binary.BigEndian.Uint16(data[currentOffset:currentOffset+2]) << 2 >> 2
