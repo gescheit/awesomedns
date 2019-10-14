@@ -41,8 +41,8 @@ func connWriter(req chan []byte, conn net.Conn, rate int, ctx context.Context) {
 		if !ok {
 			return
 		}
-		writen, err := conn.Write(msg)
-		if writen != len(msg) || err != nil {
+		written, err := conn.Write(msg)
+		if written != len(msg) || err != nil {
 			log.Printf("unable to send %v err=%v", msg, err)
 		}
 		// простая реализация выдерживание периода
@@ -84,7 +84,7 @@ func MegaBulkResolveA(req []string, config Config) (map[string]Answer, error) {
 
 	writerCh := make(chan []byte, 10)
 	defer close(writerCh)
-	readerCh := make(chan []byte, 10)
+	readerCh := make(chan []byte, 1000)
 	defer close(readerCh)
 
 	go connWriter(writerCh, conn, rate, ctx)

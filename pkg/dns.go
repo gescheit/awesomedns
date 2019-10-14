@@ -3,7 +3,6 @@ package awesomedns
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"reflect"
 	"time"
@@ -161,7 +160,6 @@ func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, e
 }
 
 func resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, error) {
-	var n int
 	var transactionId int
 	conn, err := net.Dial("udp", config.Server)
 
@@ -176,14 +174,11 @@ func resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, e
 	if n, err = conn.Write(q); err != nil {
 		return nil, transactionId, err
 	}
-	log.Printf("%v bytes written", n)
-
 	// receive message from server
 	buffer := make([]byte, 1024)
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if n, err = conn.Read(buffer); err != nil {
 		return nil, transactionId, err
 	}
-	log.Printf("%v bytes read", n)
 	return parseDnsAnswer(buffer)
 }

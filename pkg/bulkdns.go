@@ -32,19 +32,18 @@ func worker(config Config, q chan string, res chan workerAnswer) {
 func BulkResolveA(req []string, config Config) (map[string]Answer, error) {
 	var res = map[string]Answer{}
 	workers := 2
-	reqs := make(chan string, 10)
+	reqs := make(chan string)
 	defer close(reqs)
 	ans := make(chan workerAnswer, 10)
 	defer close(ans)
-	// запуск n-воркеров
+
 	for w := 0; w < workers; w++ {
 		go worker(config, reqs, ans)
 	}
 
-	for _, fqdn := range req {
-		log.Println("send", fqdn)
+	go func() {for _, fqdn := range req {
 		reqs <- fqdn
-	}
+	}}()
 
 	for i := 0; i < len(req); i++ {
 		a := <-ans
