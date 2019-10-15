@@ -2,6 +2,7 @@ package awesomedns
 
 // наивная реализация массового режима
 // вывываем Resolve на каждый запрос
+// нет перепосылки
 import (
 	"log"
 	"net"
@@ -41,9 +42,11 @@ func BulkResolveA(req []string, config Config) (map[string]Answer, error) {
 		go worker(config, reqs, ans)
 	}
 
-	go func() {for _, fqdn := range req {
-		reqs <- fqdn
-	}}()
+	go func() {
+		for _, fqdn := range req {
+			reqs <- fqdn
+		}
+	}()
 
 	for i := 0; i < len(req); i++ {
 		a := <-ans

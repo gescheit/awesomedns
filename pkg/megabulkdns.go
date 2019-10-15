@@ -70,7 +70,7 @@ func connReader(answers chan []byte, conn net.Conn, ctx context.Context) {
 }
 
 func MegaBulkResolveA(req []string, config Config) (map[string]Answer, error) {
-	rate := 15    // pps
+	rate := 1    // pps
 	timeout := 10 // s
 	var res = map[string]Answer{}
 	var inwait = map[int]*waitStatus{} // отслеживание статуса запроса. нужно для перепосылки

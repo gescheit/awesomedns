@@ -1,8 +1,10 @@
 package awesomedns
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"reflect"
 	"time"
@@ -161,24 +163,73 @@ func Resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, e
 
 func resolve(rrtype DnsType, qname string, config Config) ([]interface{}, int, error) {
 	var transactionId int
-	conn, err := net.Dial("udp", config.Server)
+	var buffer []byte
+	var read, written, datasize_int int
+	isTCP := config.IsTCP
+	proto := "udp"
+	if isTCP {
+		proto = "tcp"
+	}
+	conn, err := net.Dial(proto, config.Server)
 
 	if err != nil {
 		return nil, transactionId, err
 	}
-
+	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	q, err := makeQuery(rrtype, qname, 234)
 	if err != nil {
 		return nil, transactionId, err
 	}
-	if n, err = conn.Write(q); err != nil {
+	if isTCP { // в tcp надо записать еще и размер данных
+		wsize := make([]byte, 2)
+		binary.BigEndian.PutUint16(wsize, uint16(len(q)))
+		written, err := conn.Write(wsize)
+		if err != nil {
+			return nil, transactionId, err
+		}
+		if written != 2 {
+			return nil, transactionId, errors.New("wrong read")
+		}
+	}
+
+	written, err = conn.Write(q)
+
+	if err != nil {
 		return nil, transactionId, err
 	}
-	// receive message from server
-	buffer := make([]byte, 1024)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if n, err = conn.Read(buffer); err != nil {
-		return nil, transactionId, err
+	if written != len(q) {
+		return nil, transactionId, errors.New("wrong write")
 	}
+
+	if isTCP {
+		datasize := make([]byte, 2)
+		read, err := conn.Read(datasize)
+		if err != nil {
+			return nil, transactionId, err
+		}
+		if read != 2 {
+			return nil, transactionId, errors.New("wrong read")
+		}
+		datasize_int = int(binary.BigEndian.Uint16(datasize))
+		buffer = make([]byte, datasize_int, datasize_int)
+	} else {
+		buffer = make([]byte, 1024)
+	}
+
+	if isTCP {
+		read, err = io.ReadFull(conn, buffer)
+		if err != nil {
+			return nil, transactionId, err
+		}
+		if datasize_int > 0 && read != datasize_int {
+			return nil, transactionId, errors.New("wrong read")
+		}
+	} else {
+		read, err = conn.Read(buffer)
+		if err != nil {
+			return nil, transactionId, err
+		}
+	}
+
 	return parseDnsAnswer(buffer)
 }

@@ -25,6 +25,7 @@ import (
 
 type Config struct {
 	Server string
+	IsTCP  bool
 }
 
 type DnsSoa struct {
@@ -35,6 +36,25 @@ type DnsSoa struct {
 	Retry   uint32
 	Expire  uint32
 	Minimum uint32
+}
+
+type DnsLoc struct {
+	Version uint8
+	Size    uint8
+}
+
+type DnsNaptr struct {
+	Order       uint16
+	Preference  uint16
+	Flag        string
+	Service     string
+	Regex       string
+	Replacement string
+}
+
+type DnsRp struct {
+	Mailbox string
+	TXTRR   string
 }
 
 type DnsRequestedInAnswer struct {
@@ -91,8 +111,15 @@ const (
 	RR_CNAME DnsType = 5
 	RR_SOA   DnsType = 6
 	RR_PTR   DnsType = 12
+	RR_HINFO DnsType = 13
 	RR_MX    DnsType = 15
+	RR_TXT   DnsType = 16
+	RR_RP    DnsType = 17 // rfc1183
+	RR_AFSDB DnsType = 18 // rfc5864
+	RR_LOC   DnsType = 29 // rfc1876
 	RR_SRV   DnsType = 33
+	RR_NAPTR DnsType = 35 // rfc2915
+	RR_AXFR  DnsType = 252
 	RR_ANY   DnsType = 255
 )
 
@@ -103,8 +130,15 @@ var RRnames = map[DnsType]string{
 	RR_CNAME: "CNAME",
 	RR_SOA:   "SOA",
 	RR_PTR:   "PTR",
+	RR_HINFO: "HINFO",
 	RR_MX:    "MX",
+	RR_RP:    "RP",
+	RR_TXT:   "TXT",
+	RR_AFSDB: "AFSDB",
+	RR_LOC:   "LOC",
 	RR_SRV:   "SRV",
+	RR_NAPTR: "NAPTR",
+	RR_AXFR:  "RR_AXFR",
 	RR_ANY:   "ANY",
 }
 
@@ -385,7 +419,7 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 		if err != nil {
 			return nil, header, err
 		}
-		soa_rname, _, err := readName(rdata[read:], nameCache, pos)
+		soa_rname, _, err := readName(rdata[read:], nameCache, pos+read)
 		if err != nil {
 			return nil, header, err
 		}
@@ -397,7 +431,7 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 		ret = DnsSoa{soa_name, soa_rname, serial, refresh, retry, expire, minimum}
 	case RR_MX:
 		preference := binary.BigEndian.Uint16(rdata)
-		exchange, _, err := readName(rdata[2:], nameCache, pos)
+		exchange, _, err := readName(rdata[2:], nameCache, pos+2)
 		if err != nil {
 			return nil, header, err
 		}
@@ -406,11 +440,61 @@ func parseDnsAnswerSection(data []byte, position *int, nameCache map[int]string)
 		priority := binary.BigEndian.Uint16(rdata)
 		weight := binary.BigEndian.Uint16(rdata[2:])
 		port := binary.BigEndian.Uint16(rdata[4:])
-		target, _, err := readName(rdata[6:], nameCache, pos)
+		target, _, err := readName(rdata[6:], nameCache, pos+6)
 		if err != nil {
 			return nil, header, err
 		}
 		ret = DnsSRV{priority, weight, port, target}
+	case RR_HINFO:
+		cpuLength := rdata[0]
+		cpu := string(rdata[1 : int(cpuLength)+1])
+		ret = cpu
+	case RR_TXT:
+		txtLength := rdata[0]
+		txt := string(rdata[1 : int(txtLength)+1])
+		ret = txt
+	case RR_AFSDB:
+		//subtype := binary.BigEndian.Uint16(rdata)
+		hostname, _, err := readName(rdata[2:], nameCache, pos+2)
+		if err != nil {
+			return nil, header, err
+		}
+		ret = hostname
+	case RR_LOC:
+		version := rdata[0]
+		size := rdata[1]
+		// TODO: декодировать остальные поля
+		ret = DnsLoc{version, size}
+	case RR_NAPTR:
+		order := binary.BigEndian.Uint16(rdata)
+		pref := binary.BigEndian.Uint16(rdata[2:])
+		flag_length := rdata[4]
+		rdataPos := 5
+		flag := string(rdata[rdataPos : rdataPos+int(flag_length)])
+		rdataPos += int(flag_length)
+		service_length := rdata[rdataPos]
+		rdataPos++
+		service := string(rdata[rdataPos : rdataPos+int(service_length)])
+		rdataPos += int(service_length)
+		regexLength := rdata[rdataPos]
+		rdataPos++
+		regex := string(rdata[rdataPos : rdataPos+int(regexLength)])
+		rdataPos += int(regexLength)
+		replacement, _, err := readName(rdata[rdataPos:], nameCache, pos+rdataPos)
+		if err != nil {
+			return nil, header, err
+		}
+		ret = DnsNaptr{order, pref, flag, service, regex, replacement}
+	case RR_RP:
+		mailbox, read, err := readName(rdata, nameCache, pos)
+		if err != nil {
+			return nil, header, err
+		}
+		txtRR, read, err := readName(rdata[read:], nameCache, pos+read)
+		if err != nil {
+			return nil, header, err
+		}
+		ret = DnsRp{mailbox, txtRR}
 	default:
 		return nil, header, fmt.Errorf("unsupported data type %v", typ)
 	}
